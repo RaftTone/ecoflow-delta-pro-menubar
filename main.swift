@@ -204,6 +204,13 @@ if let i = args.firstIndex(of: "--render") {
     exit(0)
 }
 
+if let i = args.firstIndex(of: "--sheet") {
+    let dir = URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : ".")
+    _ = NSApplication.shared
+    Look.sheet(to: dir)
+    exit(0)
+}
+
 if let i = args.firstIndex(of: "--cards") {
     let dir = URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : ".")
     _ = NSApplication.shared
