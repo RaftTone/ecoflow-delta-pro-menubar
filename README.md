@@ -31,6 +31,12 @@ A small native menu bar app for the **first-generation EcoFlow DELTA Pro**: batt
 - macOS 14+, Xcode Command Line Tools (`xcode-select --install`)
 - An EcoFlow **developer** account with an Access Key and Secret Key ([developer.ecoflow.com](https://developer.ecoflow.com)); your DELTA Pro bound to the same account
 
+## Get EcoFlow API keys
+
+1. Go to [developer.ecoflow.com](https://developer.ecoflow.com) and sign in with the **same account your DELTA Pro is bound to** in the EcoFlow app.
+2. Open the security / access-key page, apply for API access (EcoFlow reviews the request, it may take a few days) and create an **Access Key** and **Secret Key**.
+3. Use the `eu` region for Europe or `us` for the Americas / rest of the world (the host differs: `api-e.ecoflow.com` vs `api-a.ecoflow.com`).
+
 ## Install
 
 ```sh
@@ -47,6 +53,22 @@ security add-generic-password -U -s ua.rafttone.ecoflowbar -a ecoflow -w \
 ```
 
 `sn` is optional (a fallback if the device list cannot be fetched). `region` is `eu` (api-e.ecoflow.com) or `us` (api-a.ecoflow.com). Check it works without the UI: `build/EcoFlowBar --once`.
+
+Replace the keys later by running the same `security add-generic-password -U ...` command again, then right-click the icon and choose *Refresh*.
+
+First run: the ring appears in the menu bar within a few seconds. Click it to open the panel; right-click for the menu.
+
+## Troubleshooting
+
+| Symptom | What to do |
+|---|---|
+| No icon in the menu bar | macOS 26 may hide new menu bar apps: *System Settings → Menu Bar → allow EcoFlowBar*. If the bar is crowded macOS silently drops items; quit another menu bar app or run `killall ControlCenter`. |
+| Panel says "No EcoFlow keys in Keychain" | Run the `security add-generic-password` command above exactly once; check with `build/EcoFlowBar --once`. |
+| `EcoFlow: ...` error, or "signature" / "access denied" | Wrong region, keys not approved yet, or the device is bound to a different account. |
+| Icon dimmed | Data is older than 5 minutes (no network, or EcoFlow's cloud is slow). It recovers by itself. |
+| macOS asks to allow Keychain access | Choose *Always Allow* once. |
+| A write shows "not confirmed within 20 s" | The station ignored the command (wrong model, or it is offline). Nothing was changed; the panel re-reads the real value. |
+| Garbage "ghost" slots in the menu bar after unpinning | A macOS 26 quirk: `killall ControlCenter` clears them. |
 
 Uninstall: `launchctl bootout gui/$(id -u)/ua.rafttone.ecoflow-bar; rm -rf ~/Applications/EcoFlowBar.app ~/Library/LaunchAgents/ua.rafttone.ecoflow-bar.plist`, then delete the Keychain item.
 
