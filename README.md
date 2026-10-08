@@ -26,9 +26,18 @@ A small native menu bar app for the **first-generation EcoFlow DELTA Pro**: batt
 - Right-click the icon for *Refresh* / pinning / *Quit*. English and Ukrainian UI (follows the system language).
 - Lightweight: ~0% CPU idle, ~30 to 40 MB RAM, one HTTPS request per minute.
 
+## Download (no build needed)
+
+1. Download `EcoFlowBar-<version>-macos.zip` from the [Releases](../../releases) page, unzip it and drag **EcoFlowBar.app** to *Applications*. It is a universal binary (Apple Silicon and Intel), macOS 14+.
+2. The app is **not notarized** (no paid Apple Developer ID), so macOS will refuse the first launch. Allow it once: *System Settings → Privacy & Security → "Open Anyway"*, or in Terminal: `xattr -dr com.apple.quarantine /Applications/EcoFlowBar.app`.
+3. Add your keys to the Keychain (see **Install** below, the `security add-generic-password` command), then start the app.
+4. To start it at login: *System Settings → General → Login Items → add EcoFlowBar*. (`./build.sh` installs a LaunchAgent instead.)
+
+Prefer to build it yourself? See below.
+
 ## Requirements
 
-- macOS 14+, Xcode Command Line Tools (`xcode-select --install`)
+- macOS 14+; Xcode Command Line Tools (`xcode-select --install`) only if you build from source
 - An EcoFlow **developer** account with an Access Key and Secret Key ([developer.ecoflow.com](https://developer.ecoflow.com)); your DELTA Pro bound to the same account
 
 ## Get EcoFlow API keys
