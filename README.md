@@ -18,7 +18,7 @@ A small native menu bar app for the **first-generation EcoFlow DELTA Pro**: batt
 
 - **Menu bar:** a white template ring (adapts to light/dark menu bars like the system icons) with the charge % in the middle; a bolt appears while external power is flowing in; dimmed when data is older than 5 minutes. About 37 pt wide.
 - **Panel (click):** time remaining (or time to full), a charge bar with markers, input / output watts, AC load with the X-Boost badge, USB-A / FAST / Type-C / 12 V ports.
-- **Limits by dragging:** drag the *Discharge to* (0 to 30%) and *Charge to* (50 to 100%) handles on the bar, smoothly in 1% steps. Changes are only proposed (orange) until you press **Apply**.
+- **Limits by dragging:** drag the *Discharge to* (0 to 30%) and *Charge to* (50 to 100%) handles on the bar, smoothly in 1% steps. Changes are only proposed until you press **Apply** (the Apply / Cancel buttons appear while there are unapplied changes).
 - **Charging speed:** AC charging power, 200 to 2900 W.
 - **Honest writes:** EcoFlow answers `code=0 Success` to *any* command, even nonsense, so after every write the app reads the value back (up to 20 s) and tells you whether the station confirmed it.
 - **Input means external input:** input = AC inlet + DC inlet. EcoFlow's own app shows `pd.wattsInSum`, which also counts energy moving between the main and the extra battery, so it can show hundreds of watts during a blackout. This app shows 0 W when nothing is plugged in.

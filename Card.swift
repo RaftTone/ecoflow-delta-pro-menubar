@@ -57,7 +57,7 @@ private struct RoundButton: View {
 }
 
 /// Шкала заряду з двома ручками меж: тягни «Розряд до» (0…30) і «Заряд до» (50…100) прямо по батареї, плавно по 1%.
-/// Змінене лише ПРОПОНУЄТЬСЯ (помаранчеве); у станцію піде після «Застосувати».
+/// Змінене лише ПРОПОНУЄТЬСЯ (про це кажуть кнопки «Застосувати»/«Скасувати»); у станцію піде після «Застосувати».
 private struct BatteryBar: View {
     let soc: Double
     @Binding var minSoc: Int
@@ -118,12 +118,12 @@ private struct BatteryBar: View {
 
     private func dash(at x: CGFloat) -> some View {
         Path { p in p.move(to: CGPoint(x: x, y: barH)); p.addLine(to: CGPoint(x: x, y: barH + 36)) }
-            .stroke(pending ? Color.efOrange : Color.secondary.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+            .stroke(Color.secondary.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
     }
 
     private func knob(at x: CGFloat, isActive: Bool) -> some View {
         Capsule()
-            .fill(pending ? Color.efOrange : Color.white)
+            .fill(Color.white)
             .overlay(Capsule().stroke(Color.black.opacity(0.28), lineWidth: 0.8))
             .frame(width: isActive ? 8 : 6, height: barH + 8)
             .shadow(color: .black.opacity(0.35), radius: 1.5, y: 0.5)
@@ -134,7 +134,7 @@ private struct BatteryBar: View {
         HStack(spacing: 4) {
             Text(title).font(.system(size: 10)).foregroundStyle(.secondary)
             Text(verbatim: "\(value)%").font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(pending ? Color.efOrange : Color.primary)
+                .foregroundStyle(Color.primary)
         }
         .fixedSize()
         .frame(width: 96, alignment: leading ? .leading : .trailing)
