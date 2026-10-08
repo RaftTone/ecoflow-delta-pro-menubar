@@ -51,7 +51,7 @@ Uninstall: `launchctl bootout gui/$(id -u)/ua.rafttone.ecoflow-bar; rm -rf ~/App
 ## Notes and limits
 
 - **Tested only on the first-generation DELTA Pro.** It uses the *legacy* command set (`cmdSet 32`), which differs from DELTA 2 / Pro Ultra. Other models will read fine if the field names match, but writes will not work.
-- The *charge limit* (`id 49`) and *charging speed* (`id 69`) commands are verified on hardware. The *discharge limit* command (`id 51`) is taken from third-party integrations and is **not yet confirmed** here; the app reads the value back and reports honestly if the station ignores it.
+- Only the *charging speed* command (`id 69`) has been confirmed on hardware so far. The *charge limit* (`id 49`) and *discharge limit* (`id 51`) commands follow the same legacy format (and match third-party integrations) but are **not yet confirmed here**; after every write the app reads the value back and tells you honestly if the station ignored it.
 - Charge % is `ems.f32LcdShowSoc`, the same number as on the station's display, not a single battery's `bmsMaster.soc` (the two batteries differ by a percent or two).
 - Remaining-time estimates from the station are discarded when implausible (e.g. hundreds of hours while on mains).
 - Use at your own risk: this writes settings to a device that may power things you care about. Lowering the discharge limit shortens blackout autonomy.
