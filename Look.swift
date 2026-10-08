@@ -28,10 +28,9 @@ enum Look {
         let attr = NSAttributedString(string: txt, attributes: [.font: font])
         let line = CTLineCreateWithAttributedString(attr)
         let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)       // чорнило відносно базової лінії
-        let adv = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
-        // Як у battery(): по горизонталі центруємо за advance, по вертикалі за висотою великих літер.
-        let x0 = -adv / 2 + ink.minX, x1 = -adv / 2 + ink.maxX
-        let y0 = -font.capHeight / 2 + ink.minY, y1 = -font.capHeight / 2 + ink.maxY
+        // Як у battery(): чорнило центруємо за його справжніми межами в обох напрямках.
+        let x0 = -ink.midX + ink.minX, x1 = -ink.midX + ink.maxX
+        let y0 = -ink.midY + ink.minY, y1 = -ink.midY + ink.maxY
         let far = max(hypot(x0, y0), hypot(x0, y1), hypot(x1, y0), hypot(x1, y1))
         return (far, ringD / 2 - ringStroke - 0.2)
     }
@@ -100,9 +99,12 @@ enum Look {
             let txt = soc.map { "\(Int($0.rounded()))" } ?? "–"
             let font = digitFont(for: txt)
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
-            let ts = (txt as NSString).size(withAttributes: attrs)
-            let baseline = c.y - font.capHeight / 2
-            (txt as NSString).draw(at: NSPoint(x: c.x - ts.width / 2, y: baseline + font.descender), withAttributes: attrs)
+            // Центр за справжнім чорнилом цифр (а не за advance/capHeight: у округлого heavy вони зсувають число вгору-вліво).
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: txt, attributes: attrs))
+            let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+            let ctx = NSGraphicsContext.current!.cgContext
+            ctx.textPosition = CGPoint(x: c.x - ink.midX, y: c.y - ink.midY)
+            CTLineDraw(line, ctx)
 
             // блискавка поруч: живлення на вході
             if bolt {
