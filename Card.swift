@@ -56,7 +56,7 @@ private struct RoundButton: View {
     }
 }
 
-/// Шкала заряду з двома ручками меж: тягни «Розряд до» (0…30) і «Заряд до» (50…100) прямо по батареї, крок 5%.
+/// Шкала заряду з двома ручками меж: тягни «Розряд до» (0…30) і «Заряд до» (50…100) прямо по батареї, плавно по 1%.
 /// Змінене лише ПРОПОНУЄТЬСЯ (помаранчеве); у станцію піде після «Застосувати».
 private struct BatteryBar: View {
     let soc: Double
@@ -64,6 +64,7 @@ private struct BatteryBar: View {
     @Binding var maxSoc: Int
     var pending = false
     var enabled = true
+    var showLimits = true
     @State private var active: Int?            // 0 = нижня ручка, 1 = верхня
 
     private let barH: CGFloat = 24
@@ -82,9 +83,10 @@ private struct BatteryBar: View {
                     .overlay(alignment: .top) {
                         Capsule().fill(Color.white.opacity(0.35)).frame(height: 1.2).padding(.horizontal, 6).padding(.top, 2)
                     }
-                // пунктир від ручки вниз
+                if showLimits {
                 dash(at: x(Double(minSoc)))
                 dash(at: x(Double(maxSoc)))
+                }
                 // поточний заряд
                 HStack(spacing: 3) {
                     Image(systemName: "arrowtriangle.up.fill").font(.system(size: 6)).foregroundStyle(.secondary)
@@ -92,13 +94,11 @@ private struct BatteryBar: View {
                 }
                 .fixedSize()
                 .position(x: min(max(x(soc), 22), w - 22), y: barH + 10)
-                // підписи меж
+                if showLimits {
                 label(L.t("Discharge to", "Розряд до"), minSoc, leading: true).offset(x: min(max(x(Double(minSoc)) + 7, 0), w - 96), y: barH + 22)
                 label(L.t("Charge to", "Заряд до"), maxSoc, leading: false).offset(x: min(max(x(Double(maxSoc)) - 103, 0), w - 96), y: barH + 22)
-                // ручки
                 knob(at: x(Double(minSoc)), isActive: active == 0)
                 knob(at: x(Double(maxSoc)), isActive: active == 1)
-                // перехоплення жесту по всій зоні
                 Rectangle().fill(Color.clear).contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { v in
@@ -106,13 +106,14 @@ private struct BatteryBar: View {
                             if active == nil {
                                 active = abs(v.startLocation.x - x(Double(minSoc))) <= abs(v.startLocation.x - x(Double(maxSoc))) ? 0 : 1
                             }
-                            let pct = Int((v.location.x / max(w, 1) * 100 / 5).rounded()) * 5
+                            let pct = Int((v.location.x / max(w, 1) * 100).rounded())          // крок 1%
                             if active == 0 { minSoc = min(30, max(0, pct)) } else { maxSoc = min(100, max(50, pct)) }
                         }
                         .onEnded { _ in active = nil })
+                }
             }
         }
-        .frame(height: barH + 40)
+        .frame(height: showLimits ? barH + 40 : barH + 22)
     }
 
     private func dash(at x: CGFloat) -> some View {
@@ -151,13 +152,20 @@ struct CardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
+            if model.devices.count > 1 { deviceStrip }
             if let s = model.snap {
                 hero(s)
                 BatteryBar(soc: s.soc ?? 0, minSoc: $model.editMin, maxSoc: $model.editMax,
-                           pending: model.dirty, enabled: !model.busy)
+                           pending: model.dirty, enabled: !model.busy, showLimits: s.supportsControls)
                 flows(s)
-                ports(s)
-                controls(s)
+                if s.supportsControls {
+                    ports(s)
+                    controls(s)
+                } else {
+                    Text(L.t("Read-only for this model: controls are available for the first-generation DELTA Pro only.",
+                             "Цю модель лише читаємо: керування є тільки для DELTA Pro першого покоління."))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
             } else {
                 Text(model.error ?? L.t("Loading…", "Завантажую…")).foregroundStyle(.secondary)
             }
@@ -171,12 +179,34 @@ struct CardView: View {
     // — шапка
     private var header: some View {
         HStack(spacing: 6) {
-            Text("EcoFlow DELTA Pro").font(.system(size: 13, weight: .semibold, design: .rounded))
+            Text(model.title).font(.system(size: 13, weight: .semibold, design: .rounded))
             Circle().fill(model.isStale ? Color.efOrange : Color.efGreen).frame(width: 6, height: 6)
             Spacer()
             if let t = model.snap?.tempC {
                 Label(String(Int(t.rounded())) + " °C", systemImage: "thermometer.medium")
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // — перемикач пристроїв (з'являється, коли їх більше одного)
+    private var deviceStrip: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 6, alignment: .leading)], alignment: .leading, spacing: 6) {
+            ForEach(model.devices) { d in
+                let on = d.sn == model.selectedSN
+                let pct = model.snaps[d.sn]?.soc.map { "\(Int($0.rounded()))%" } ?? "–"
+                HStack(spacing: 5) {
+                    Circle().fill(d.online ? Color.efGreen : Color.secondary.opacity(0.5)).frame(width: 5, height: 5)
+                    Text(d.name).font(.system(size: 11, weight: on ? .semibold : .regular)).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(verbatim: pct).font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(on ? Color.efGreen : Color.secondary)
+                }
+                .padding(.horizontal, 9).padding(.vertical, 4)
+                .frame(maxWidth: .infinity)
+                .background(Capsule().fill(on ? Color.primary.opacity(0.14) : Color.primary.opacity(0.06)))
+                .opacity(d.online ? 1 : 0.55)
+                .contentShape(Capsule())
+                .onTapGesture { model.select(d.sn) }
             }
         }
     }

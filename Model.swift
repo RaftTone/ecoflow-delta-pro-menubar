@@ -15,7 +15,7 @@ import CryptoKit
 struct EFConfig {
     let accessKey: String
     let secretKey: String
-    let sn: String
+    let sn: String?          // необов'язковий: пристрої беремо зі списку акаунта, це лише запасний/типовий
     let host: String
 
     static func load() -> EFConfig? {
@@ -29,12 +29,22 @@ struct EFConfig {
         p.waitUntilExit()
         guard p.terminationStatus == 0,
               let obj = try? JSONSerialization.jsonObject(with: out.fileHandleForReading.readDataToEndOfFile()) as? [String: Any],
-              let ak = obj["access_key"] as? String, let sk = obj["secret_key"] as? String,
-              let sn = obj["sn"] as? String else { return nil }
+              let ak = obj["access_key"] as? String, let sk = obj["secret_key"] as? String else { return nil }
+        let sn = obj["sn"] as? String
         let region = (obj["region"] as? String) ?? "eu"
         return EFConfig(accessKey: ak, secretKey: sk, sn: sn,
                         host: region == "us" ? "https://api-a.ecoflow.com" : "https://api-e.ecoflow.com")
     }
+}
+
+// MARK: - Пристрій
+
+struct Device: Identifiable, Equatable {
+    var id: String { sn }
+    let sn: String
+    var name: String
+    var online: Bool
+    var product: String
 }
 
 // MARK: - Знімок стану станції
@@ -60,6 +70,7 @@ struct Snapshot {
     var chgRemainMin: Double?
     var dsgRemainMin: Double?
     var tempC: Double?
+    var supportsControls = false     // лише DELTA Pro (legacy-команди): для інших моделей картка тільки читає
     var fetched = Date()
 
     var externalInW: Double { acInW + dcInW }
@@ -112,33 +123,67 @@ enum EcoFlowAPI {
         return root
     }
 
-    static func fetch(_ cfg: EFConfig) async throws -> Snapshot {
+    /// Усі пристрої акаунта (назва, чи онлайн). Це дає змогу не прописувати серійники вручну.
+    static func devices(_ cfg: EFConfig) async throws -> [Device] {
+        var req = URLRequest(url: URL(string: cfg.host + "/iot-open/sign/device/list")!, timeoutInterval: 20)
+        for (k, v) in signedHeaders(cfg, fields: [:]) { req.setValue(v, forHTTPHeaderField: k) }
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let root = try decode(data)
+        let arr = (root["data"] as? [[String: Any]]) ?? []
+        return arr.compactMap { d in
+            guard let sn = d["sn"] as? String else { return nil }
+            let product = (d["productName"] as? String) ?? ""
+            let name = (d["deviceName"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (product.isEmpty ? "EcoFlow" : product)
+            return Device(sn: sn, name: name, online: "\(d["online"] ?? 1)" != "0", product: product)
+        }
+    }
+
+    static func fetch(_ cfg: EFConfig, sn: String) async throws -> Snapshot {
         var comps = URLComponents(string: cfg.host + "/iot-open/sign/device/quota/all")!
-        comps.queryItems = [URLQueryItem(name: "sn", value: cfg.sn)]
+        comps.queryItems = [URLQueryItem(name: "sn", value: sn)]
         var req = URLRequest(url: comps.url!, timeoutInterval: 20)
-        for (k, v) in signedHeaders(cfg, fields: ["sn": cfg.sn]) { req.setValue(v, forHTTPHeaderField: k) }
+        for (k, v) in signedHeaders(cfg, fields: ["sn": sn]) { req.setValue(v, forHTTPHeaderField: k) }
         let (data, _) = try await URLSession.shared.data(for: req)
         let root = try decode(data)
         var f: [String: Any] = [:]
         flatten(root["data"] ?? [:], into: &f)
+        return try parse(f)
+    }
+
+    /// Розбір відповіді. DELTA Pro (є `ems.f32LcdShowSoc` і `inv.cfgSlowChgWatts`) читається повністю й дозволяє керування.
+    /// Інші моделі: «найкраща спроба» лише на читання за переліком типових назв полів (НЕ перевірено на їхньому залізі).
+    static func parse(_ f: [String: Any]) throws -> Snapshot {
         func n(_ k: String) -> Double { number(f[k]) ?? 0 }
+        func first(_ keys: [String]) -> Double? { for k in keys { if let v = number(f[k]) { return v } }; return nil }
         func i(_ k: String) -> Int? { number(f[k]).map { Int($0.rounded()) } }
         var s = Snapshot()
-        s.soc = number(f["ems.f32LcdShowSoc"])
-        s.socMaster = number(f["bmsMaster.soc"])
-        s.socSlave = number(f["bmsSlave1.soc"])
-        s.acInW = n("inv.inputWatts"); s.dcInW = n("mppt.inWatts")
-        s.acInV = n("inv.acInVol") / 1000
-        s.acOutW = n("inv.outputWatts"); s.dc12W = n("mppt.dcdc12vWatts"); s.carW = n("pd.carWatts")
-        s.usb1 = n("pd.usb1Watts"); s.usb2 = n("pd.usb2Watts")
-        s.qc1 = n("pd.qcUsb1Watts"); s.qc2 = n("pd.qcUsb2Watts")
-        s.c1 = n("pd.typec1Watts"); s.c2 = n("pd.typec2Watts")
-        s.totalOutW = number(f["pd.wattsOutSum"]) ?? s.acOutW
-        s.xboost = (i("inv.cfgAcXboost") ?? 0) == 1
-        s.maxSoc = i("ems.maxChargeSoc"); s.minSoc = i("ems.minDsgSoc"); s.acChargeW = i("inv.cfgSlowChgWatts")
-        s.chgRemainMin = number(f["ems.chgRemainTime"]); s.dsgRemainMin = number(f["ems.dsgRemainTime"])
-        s.tempC = number(f["bmsMaster.temp"])
-        if s.soc == nil { throw EFError.msg(L.t("no charge level in the response", "у відповіді нема заряду")) }
+        s.supportsControls = f["ems.f32LcdShowSoc"] != nil && f["inv.cfgSlowChgWatts"] != nil
+        if s.supportsControls {
+            s.soc = number(f["ems.f32LcdShowSoc"])
+            s.socMaster = number(f["bmsMaster.soc"])
+            s.socSlave = number(f["bmsSlave1.soc"])
+            s.acInW = n("inv.inputWatts"); s.dcInW = n("mppt.inWatts")
+            s.acInV = n("inv.acInVol") / 1000
+            s.acOutW = n("inv.outputWatts"); s.dc12W = n("mppt.dcdc12vWatts"); s.carW = n("pd.carWatts")
+            s.usb1 = n("pd.usb1Watts"); s.usb2 = n("pd.usb2Watts")
+            s.qc1 = n("pd.qcUsb1Watts"); s.qc2 = n("pd.qcUsb2Watts")
+            s.c1 = n("pd.typec1Watts"); s.c2 = n("pd.typec2Watts")
+            s.totalOutW = number(f["pd.wattsOutSum"]) ?? s.acOutW
+            s.xboost = (i("inv.cfgAcXboost") ?? 0) == 1
+            s.maxSoc = i("ems.maxChargeSoc"); s.minSoc = i("ems.minDsgSoc"); s.acChargeW = i("inv.cfgSlowChgWatts")
+            s.chgRemainMin = number(f["ems.chgRemainTime"]); s.dsgRemainMin = number(f["ems.dsgRemainTime"])
+            s.tempC = number(f["bmsMaster.temp"])
+        } else {
+            s.soc = first(["ems.f32LcdShowSoc", "bms_bmsStatus.f32ShowSoc", "bms_emsStatus.f32LcdShowSoc", "bms_bmsStatus.soc",
+                           "pd.soc", "bmsMaster.soc", "bms_emsStatus.lcdShowSoc", "ems.lcdShowSoc"])
+            s.acInW = first(["inv.inputWatts", "pd.wattsInSum"]) ?? 0
+            s.totalOutW = first(["pd.wattsOutSum", "inv.outputWatts"]) ?? 0
+            s.acOutW = first(["inv.outputWatts"]) ?? s.totalOutW
+            s.chgRemainMin = first(["ems.chgRemainTime", "bms_emsStatus.chgRemainTime", "pd.remainTime"])
+            s.dsgRemainMin = first(["ems.dsgRemainTime", "bms_emsStatus.dsgRemainTime", "pd.remainTime"])
+            s.tempC = first(["bmsMaster.temp", "bms_bmsStatus.temp", "inv.outTemp"])
+        }
+        if s.soc == nil { throw EFError.msg(L.t("no charge level in the response (unsupported model?)", "у відповіді нема заряду (непідтримувана модель?)")) }
         return s
     }
 
@@ -158,7 +203,9 @@ enum EcoFlowAPI {
 
 @MainActor
 final class Model: ObservableObject {
-    @Published var snap: Snapshot?
+    @Published var devices: [Device] = []
+    @Published var snaps: [String: Snapshot] = [:]
+    @Published var selectedSN: String?
     @Published var error: String?
     @Published var editMax = 100
     @Published var editMin = 10
@@ -167,11 +214,45 @@ final class Model: ObservableObject {
     @Published var result: [String] = []
 
     static let maxRange = 50...100, minRange = 0...30, speedRange = 200...2900
+    static let maxDevices = 8                       // стеля запитів за хвилину: по одному на пристрій
+    private var devicesFetched = Date.distantPast
+    private let defaults = UserDefaults.standard
+
+    init() { selectedSN = defaults.string(forKey: "selectedSN") }
+
+    /// Обраний пристрій (його показує картка, ним керуємо).
+    var snap: Snapshot? { selectedSN.flatMap { snaps[$0] } }
+    var selectedDevice: Device? { devices.first { $0.sn == selectedSN } }
+    var title: String { selectedDevice?.name ?? "EcoFlow" }
+
+    /// Які пристрої виносити в менюбар (правий клік → меню). Порожньо = лише обраний.
+    var pinned: [String] {
+        get { defaults.stringArray(forKey: "pinnedSNs") ?? [] }
+        set { defaults.set(newValue, forKey: "pinnedSNs") }
+    }
+    var menubarSNs: [String] {
+        let live = pinned.filter { sn in devices.contains { $0.sn == sn } }
+        return live.isEmpty ? [selectedSN].compactMap { $0 } : live
+    }
+
+    func select(_ sn: String) {
+        guard sn != selectedSN, !busy else { return }
+        selectedSN = sn
+        defaults.set(sn, forKey: "selectedSN")
+        result = []
+        syncEdits(force: true)
+    }
+
+    func togglePinned(_ sn: String) {
+        var p = menubarSNs
+        if let i = p.firstIndex(of: sn) { if p.count > 1 { p.remove(at: i) } } else { p.append(sn) }
+        pinned = p
+    }
 
     var isStale: Bool { snap.map { Date().timeIntervalSince($0.fetched) > 300 } ?? true }
 
     var dirty: Bool {
-        guard let s = snap else { return false }
+        guard let s = snap, s.supportsControls else { return false }
         return editMax != s.maxSoc || editMin != s.minSoc || editSpeed != s.acChargeW
     }
 
@@ -189,21 +270,48 @@ final class Model: ObservableObject {
             error = L.t("No EcoFlow keys in Keychain", "Немає ключів EcoFlow у Keychain")
             return false
         }
-        do {
-            let wasClean = !dirty
-            snap = try await EcoFlowAPI.fetch(cfg)
-            error = nil
-            if wasClean { syncEdits() }
-            return true
-        } catch {
-            self.error = error.localizedDescription
-            return false
+        // Список пристроїв: раз на 10 хв (або поки порожній). Не вдалось і є серійник у Keychain = працюємо з ним.
+        if devices.isEmpty || Date().timeIntervalSince(devicesFetched) > 600 {
+            do {
+                let list = Array(try await EcoFlowAPI.devices(cfg).prefix(Model.maxDevices))
+                if !list.isEmpty { devices = list; devicesFetched = Date() }
+            } catch {
+                if devices.isEmpty, let sn = cfg.sn { devices = [Device(sn: sn, name: "EcoFlow", online: true, product: "")] }
+                else if devices.isEmpty { self.error = error.localizedDescription; return false }
+            }
+            if devices.isEmpty, let sn = cfg.sn { devices = [Device(sn: sn, name: "EcoFlow", online: true, product: "")] }
         }
+        if selectedSN == nil || !devices.contains(where: { $0.sn == selectedSN }) {
+            selectedSN = (cfg.sn.flatMap { s in devices.first { $0.sn == s }?.sn }) ?? devices.first?.sn
+        }
+        let wasClean = !dirty
+        var firstError: String?
+        // Усі пристрої паралельно: у панелі видно заряд кожного, в менюбарі можна закріпити будь-який.
+        let results = await withTaskGroup(of: (String, Result<Snapshot, Error>).self) { group -> [(String, Result<Snapshot, Error>)] in
+            for d in devices {
+                group.addTask {
+                    do { return (d.sn, .success(try await EcoFlowAPI.fetch(cfg, sn: d.sn))) }
+                    catch { return (d.sn, .failure(error)) }
+                }
+            }
+            var out: [(String, Result<Snapshot, Error>)] = []
+            for await r in group { out.append(r) }
+            return out
+        }
+        for (sn, r) in results {
+            switch r {
+            case .success(let s): snaps[sn] = s
+            case .failure(let e): if sn == selectedSN { firstError = e.localizedDescription }
+            }
+        }
+        error = firstError
+        if wasClean { syncEdits() }
+        return firstError == nil
     }
 
     /// Записати лише змінене й ПЕРЕВІРИТИ зчитуванням: «Success» від EcoFlow нічого не доводить.
     func apply() async {
-        guard let cfg = EFConfig.load(), let s = snap, !busy else { return }
+        guard let cfg = EFConfig.load(), let s = snap, s.supportsControls, let sn = selectedSN, !busy else { return }
         busy = true
         result = []
         defer { busy = false }
@@ -219,7 +327,7 @@ final class Model: ObservableObject {
 
         for job in jobs {
             do {
-                try await EcoFlowAPI.put(cfg, body: ["sn": cfg.sn, "operateType": "TCP", "params": job.params])
+                try await EcoFlowAPI.put(cfg, body: ["sn": sn, "operateType": "TCP", "params": job.params])
             } catch {
                 result.append("⚠️ \(job.name): \(error.localizedDescription)")
                 continue
@@ -227,8 +335,8 @@ final class Model: ObservableObject {
             var confirmed = false
             for _ in 0..<10 {                              // станція застосовує не миттєво
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if let fresh = try? await EcoFlowAPI.fetch(cfg) {
-                    snap = fresh
+                if let fresh = try? await EcoFlowAPI.fetch(cfg, sn: sn) {
+                    snaps[sn] = fresh
                     if job.read(fresh) == job.target { confirmed = true; break }
                 }
             }
